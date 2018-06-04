@@ -12,7 +12,7 @@ conserved="false"
 errors="false"
 lengths="false"
 project="default"
-modifier="simulator"
+modifier="sequence"
 picks="false"
 
 while true; do
@@ -60,12 +60,12 @@ num_OTU=68
 
 if [ $abundences == "true" ]; then
   echo -e "abundances\n"
-  ./Barcode_Simulator -O -o $(($num_OTU/6)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-high-otus"
-  ./Barcode_Simulator -O -o $(($num_OTU/6*2)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-middling-otus"
-  ./Barcode_Simulator -O -o $(($num_OTU/6*3)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-low-otus"
+  ./Barcode_Simulator -O -o $(($num_OTU/6)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-high-otus" -R "$project-ref.fasta"
+  ./Barcode_Simulator -O -o $(($num_OTU/6*2)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-middling-otus" -R "$project-ref.fasta"
+  ./Barcode_Simulator -O -o $(($num_OTU/6*3)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-low-otus" -R "$project-ref.fasta"
 else
   echo -e "no abundances\n"
-  ./Barcode_Simulator -O -o $num_OTU -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-otus"
+  ./Barcode_Simulator -O -o $num_OTU -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-otus" -R "$project-ref.fasta"
 fi
 
 if [ $conserved == "true" ]; then

@@ -30,7 +30,9 @@ function generate_cluster {
 # $3 is min size of sequences wanted
 # $4 how many maximum potential differences each sequence should have
 # $5 how many maximum potential differences each sequence should have
- COUNTER=$1; BASE_SEQ=$( generate_sequence $2 $3 ); DIF=$4; dif=$5
+# $6 is bool for outputting ref sequences
+COUNTER=$1; BASE_SEQ=$( generate_sequence $2 $3 ); DIF=$4; dif=$5; ref=$6
+ if [ $ref != "false" ]; then echo $BASE_SEQ >> $ref; fi
  while [ $COUNTER -gt 0 ]; do
     #echo "$1 $2 $3 $4 $5 $6" >> test_1 ;
   number_of_difs=$(shuf -i $dif-$DIF -n 1)
@@ -46,10 +48,11 @@ function generate_master_list {
 # $4 min size of sequences
 # $5 max differences in those sequences
 # $6 min differences amoung OTU sequences
- COUNTER=$1; PER=$2; MAXSIZE=$3; MINSIZE=$4; DIF=$5 dif=$6
+ COUNTER=$1; PER=$2; MAXSIZE=$3; MINSIZE=$4; DIF=$5 dif=$6 ref=$7
      #echo "$1 $2 $3 $4 $5 $6" >> test_2 ;
  while [ $COUNTER -gt 0 ]; do
-  echo -e "$( generate_cluster $PER $MAXSIZE $MINSIZE $DIF $dif )"
+  if [ $ref != "false" ]; then echo ">REF-$COUNTER" >> $ref; fi
+  echo -e "$( generate_cluster $PER $MAXSIZE $MINSIZE $DIF $dif $ref)"
   COUNTER=$(($COUNTER-1))
  done
 }
@@ -67,24 +70,24 @@ function generate_fastas {
 # $9 is min length of seqneuces
 # $10 is min differences amoung OTU sequences
 # $11 is reuse OTU document
- COUNTER=$1; OTUS=$2; PER=$3; NUM=$4; SIZE=$5; DIF=$6; PROJ=$7; num=$8; size=$9; dif=${10}; reu=${11} save=${12} add=${13} only=${14}
+ COUNTER=$1; OTUS=$2; PER=$3; NUM=$4; SIZE=$5; DIF=$6; PROJ=$7; num=$8; size=$9; dif=${10}; reu=${11} save=${12} add=${13} only=${14} ref=${15}
  
  if [ $reu == "false" ]; then
   echo "Building master OTU list"
-  MASTER_LIST=$( generate_master_list $OTUS $PER $SIZE $size $DIF $dif )
+  MASTER_LIST=$( generate_master_list $OTUS $PER $SIZE $size $DIF $dif $ref)
  else
 	 MASTER_LIST=$( for seq in $(cat $reu); do echo $seq; done )
  fi
 
  if [ $only == "false" ]; then
-  while [ $COUNTER -gt 0 ]; do
+  while [ $COUNTER -ge 1 ]; do
    echo "WORKING ON FASTA $COUNTER"
    number_of_seqs=$(shuf -i $num-$NUM -n 1)
    sequences=$( echo -e "$MASTER_LIST" | shuf -n $number_of_seqs )
    counter=1
    for seq in $sequences; do
     #echo "Sequence: $PROJ-$COUNTER-$counter$add"
-    echo ">SEQUENCE-"$COUNTER"-"$counter$add >> $PROJ-$COUNTER.fasta
+    echo ">FASTA-"$COUNTER"_"$counter$add >> $PROJ-$COUNTER.fasta
     echo $seq >> $PROJ-$COUNTER.fasta
     counter=$(($counter+1))
    done
@@ -98,7 +101,7 @@ function generate_fastas {
 }
 
 # getopts
-OPTS=`getopt -o f:o:s:W:L:D:w:l:d:p:r:S:a:Oh --long num-fasta:,total-otus:,number-of-seq-per-otu:,max-number-otus-per-file:,max-length-of-sequences:,max-injected-differences-in-otus:,min-number-otus-per-file:,min-length-of-sequences:,min-injected-differences-in-otus:,project-name:,reuse:,save:,add:,only,help -n 'parse-options' -- "$@"`
+OPTS=`getopt -o f:o:s:W:L:D:w:l:d:p:r:R:S:a:Oh --long num-fasta:,total-otus:,number-of-seq-per-otu:,max-number-otus-per-file:,max-length-of-sequences:,max-injected-differences-in-otus:,min-number-otus-per-file:,min-length-of-sequences:,min-injected-differences-in-otus:,project-name:,reuse:,gen-ref:,save:,add:,only,help -n 'parse-options' -- "$@"`
 
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 
@@ -116,6 +119,7 @@ reuse="false"
 save="false"
 add="-run"
 only="false"
+ref="false"
 
 while true; do
   case "$1" in
@@ -130,6 +134,7 @@ while true; do
   -d | --min-injected-differences-in-otus ) min_injected_differences_in_otus="$2"; shift 2;;
   -p | --project-name ) project_name="$2"; shift 2;;
   -r | --reuse ) reuse="$2"; shift 2;;
+  -R | --gen-ref ) ref="$2"; shift 2;;
   -S | --save ) save="$2"; shift 2;;
   -a | --add ) add="$2"; shift 2;;
   -O | --only ) only="true"; shift;;
@@ -152,6 +157,7 @@ if [ $help ]; then
  echo "-d or --min-injected-differences-in-otus, Maximum Number of injected differences per-sequence per-OTU"
  echo "-p or --project-name, Project name"
  echo "-r or --reuse, Reuse OTU, given a file of OTUS, one per line, use them to make new files"
+ echo "-R or --gen-ref, generate a reference fasta"
  echo "-S or --save, Save OTUs into file"
  echo "-a or --add, add a bit of string to the generated sequnces"
  echo "-O or --only, only make OTUs, don't bother making fasta files"
@@ -169,8 +175,8 @@ echo "Reuse is: $reuse"
 echo "Save is: $save"
 echo "Add is: $add"
 echo "Only OTU Generation is: $only"
-echo "Call is: generate_fastas $num_fasta $total_otus $number_of_seq_per_otu $number_otus_per_file $length_of_sequences $injected_differences_in_otus $project_name $min_number_otus_per_file $min_length_of_sequences $min_injected_differences_in_otus $reuse $save $add $only"
+echo "Call is: generate_fastas $num_fasta $total_otus $number_of_seq_per_otu $number_otus_per_file $length_of_sequences $injected_differences_in_otus $project_name $min_number_otus_per_file $min_length_of_sequences $min_injected_differences_in_otus $reuse $save $add $only $ref"
 
-generate_fastas "$num_fasta" "$total_otus" "$number_of_seq_per_otu" "$number_otus_per_file" "$length_of_sequences" "$injected_differences_in_otus" "$project_name" "$min_number_otus_per_file" "$min_length_of_sequences" "$min_injected_differences_in_otus" "$reuse" "$save" "$add" "$only"
+generate_fastas "$num_fasta" "$total_otus" "$number_of_seq_per_otu" "$number_otus_per_file" "$length_of_sequences" "$injected_differences_in_otus" "$project_name" "$min_number_otus_per_file" "$min_length_of_sequences" "$min_injected_differences_in_otus" "$reuse" "$save" "$add" "$only" "$ref"
 
 exit 1;
