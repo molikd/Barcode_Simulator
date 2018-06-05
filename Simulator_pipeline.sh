@@ -43,7 +43,7 @@ fi
 
 #./Run_Simulation.sh
 DIR=$( pwd )
-CORES=8
+CORES=16
 
 options=$( 
 if [[ $conserved == "true" ]]; then echo -n " -C"; fi
@@ -57,15 +57,15 @@ echo "Selected: $options"
 
 ./Run_Simulation.sh $options --project $project --modifier $modifier
 
-FASTAS=$( ls | grep "$project-[0-9]*\.fasta" )
+FASTAS=$( ls | grep -E "^$project-[0-9]+\.fasta" )
 
 for file in $FASTAS; do cat $file >> $project-all.fasta; done
 
 #pick_de_novo_otus.py -a -O $CORES -i $DIR/default_all.fasta -o $DIR/def-$project -p $DIR/qiime_params.txt
 
-pick_open_reference_otus.py -a --min_otu_size 1 -n denovo --suppress_align_and_tree --force -o $DIR/${project}-def -O $CORES -r $DIR/${project}-ref.fasta -i $( echo $FASTAS | sed -e 's/ /,/g' ) 
+pick_open_reference_otus.py -a --min_otu_size 1 -n denovo --suppress_align_and_tree --force -o $DIR/${project}-def -O $CORES -r $DIR/${project}-ref.fasta -i "$( echo $FASTAS | sed -e 's/ /,/g' )" 
 
-biom convert -i $DIR/${project}-def/otu_table.biom -o $DIR/results/${project}_otu_table.txt --to-tsv --table-type="OTU table"
+biom convert -i $DIR/${project}-def/otu_table_mc1_w_tax.biom -o $DIR/results/${project}_otu_table.txt --to-tsv --table-type="OTU table"
 
 for file in $FASTAS; do 
  mash sketch -p $CORES $file
@@ -75,4 +75,9 @@ for file in $(  ls | grep "$project-[0-9]*\.fasta.msh" ); do
  mash dist -p $CORES $file $( ls | grep "$project-[0-9]*\.fasta.msh" )
 done | awk '{ if ($1 < $2) { print $1" "$2" "$3 } else { print $2" "$1" "$3 } }' | sort | uniq | grep -v " 0$" >> $DIR/results/${project}_mash_dists.txt
 
-rm -rf $project*
+rm ${project}-ref.fasta
+rm ${project}-otus
+rm ${project}-all.fasta
+rm -rf ${project}-def
+for file in $FASTAS; do rm $file; done
+for file in $( ls | grep -E "^$project-[0-9]+\.fasta.msh" ); do rm $file; done
