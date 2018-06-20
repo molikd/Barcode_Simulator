@@ -12,7 +12,7 @@ conserved="false"
 errors="false"
 lengths="false"
 project="default"
-modifier="simulator"
+modifier="sequence"
 picks="false"
 
 while true; do
@@ -52,20 +52,17 @@ if [ $errors == "true" ]; then min_max_errors=" -D 10 -d 1"; fi
 min_max_picks=" -W 136 -w 136"
 if [ $picks == "true" ]; then min_max_picks=" -W 1360 -w 14"; fi
 
-min_max_picks_abun=" -W 45 -w 45"
-if [ $picks == "true" ]; then min_max_picks_abun=" -W 453 -w 5"; fi
-
 num_fasta=68
 num_OTU=68
 
 if [ $abundences == "true" ]; then
   echo -e "abundances\n"
-  ./Barcode_Simulator -O -o $(($num_OTU/6)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-high-otus"
-  ./Barcode_Simulator -O -o $(($num_OTU/6*2)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-middling-otus"
-  ./Barcode_Simulator -O -o $(($num_OTU/6*3)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-low-otus"
+  ./Barcode_Simulator -O -o $(($num_OTU/6)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-high-otus" -R "$project-ref.fasta"
+  ./Barcode_Simulator -O -o $(($num_OTU/6*2)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-middling-otus" -R "$project-ref.fasta"
+  ./Barcode_Simulator -O -o $(($num_OTU/6*3)) -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-low-otus" -R "$project-ref.fasta"
 else
   echo -e "no abundances\n"
-  ./Barcode_Simulator -O -o $num_OTU -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-otus"
+  ./Barcode_Simulator -O -o $num_OTU -s 10 $min_max_errors $min_max_lengths -p $project -S "$project-otus" -R "$project-ref.fasta"
 fi
 
 if [ $conserved == "true" ]; then
@@ -85,9 +82,9 @@ if [ $conserved == "true" ]; then
 fi
 
 if [ $abundences == "true" ]; then
- ./Barcode_Simulator -p $project -f $num_fasta -r "$project-high-otus" $min_max_picks_abun -a "-$modifier-high"
- ./Barcode_Simulator -p $project -f $num_fasta -r "$project-middling-otus" $min_max_picks_abun -a "-$modifier-middling"
- ./Barcode_Simulator -p $project -f $num_fasta -r "$project-low-otus" $min_max_picks_abun -a "-$modifier-low"
+ ./Barcode_Simulator -p $project -f $num_fasta -r "$project-high-otus" $min_max_picks -a "-$modifier-high"
+ ./Barcode_Simulator -p $project -f $num_fasta -r "$project-middling-otus" $min_max_picks -a "-$modifier-middling"
+ ./Barcode_Simulator -p $project -f $num_fasta -r "$project-low-otus" $min_max_picks -a "-$modifier-low"
 else
  ./Barcode_Simulator -p $project -f $num_fasta -r "$project-otus" $min_max_picks -a "-$modifier"
 fi
