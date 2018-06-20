@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # getopts
-OPTS=`getopt -o CELAP:M:Nh --long conserved,errors,lengths,abundences,project:,modifier:,picks,help -n 'parse-options' -- "$@"`
+OPTS=`getopt -o CELAP:M:Nc:h --long conserved,errors,lengths,abundences,project:,modifier:,picks,cores:,help -n 'parse-options' -- "$@"`
 
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 
@@ -14,6 +14,7 @@ lengths="false"
 project="default"
 modifier="sequence"
 picks="false"
+CORES=1
 
 while true; do
   case "$1" in
@@ -24,6 +25,7 @@ while true; do
   -P | --project ) project="$2"; shift 2;;
   -M | --seq-mod ) modifier="$2"; shift 2;;
   -N | --picks ) picks="true"; shift;;
+  -c | --cores ) CORES=$2; shift;;
   -h | --help ) help=true; shift;;
   -- ) shift; break ;;
   * ) break ;;
@@ -43,7 +45,6 @@ fi
 
 #./Run_Simulation.sh
 DIR=$( pwd )
-CORES=4
 
 options=$( 
 if [[ $conserved == "true" ]]; then echo -n " -C"; fi
