@@ -1,3 +1,0 @@
-align_seqs:pairwise_alignment_method blast
-align_seqs:min_length 300
-align_seqs:min_percent_id 95

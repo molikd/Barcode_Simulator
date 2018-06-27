@@ -62,8 +62,6 @@ FASTAS=$( ls | grep -E "^$project-[0-9]+\.fasta" )
 
 for file in $FASTAS; do cat $file >> $project-all.fasta; done
 
-#pick_de_novo_otus.py -a -O $CORES -i $DIR/default_all.fasta -o $DIR/def-$project -p $DIR/qiime_params.txt
-
 pick_open_reference_otus.py -a --min_otu_size 1 -n denovo --suppress_align_and_tree --force -o $DIR/${project}-def -O $CORES -r $DIR/${project}-ref.fasta -i "$( echo $FASTAS | sed -e 's/ /,/g' )" 
 
 biom convert -i $DIR/${project}-def/otu_table_mc1_w_tax.biom -o $DIR/results/${project}_otu_table.txt --to-tsv --table-type="OTU table"
