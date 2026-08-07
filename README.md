@@ -107,6 +107,38 @@ Treatment names retain the historical codes (`A`, `C`, `E`, `L`, and `N`),
 with `O` representing the no-effect baseline. Use `--no-truth` when a
 read-level truth table would be unnecessarily large.
 
+## Post-processing without R
+
+`Barcode_Simulator_Post` replaces both `Barcode_Simulator_Post.R` and
+`Barcode_Simulator_Post_Single.R`. It implements their numeric analyses in
+POSIX AWK and writes tidy TSV data instead of opening an R plotting device:
+
+```sh
+# Mean OTU and Mash distances plus the Mantel/Pearson correlation
+./Barcode_Simulator_Post distances --output distances.tsv
+
+# Every paired point formerly sent to all_distances.png
+./Barcode_Simulator_Post all-distances --output all_distances.tsv
+
+# Correlate every unique pair of OTU/Mash distance matrices
+./Barcode_Simulator_Post mantel --output mantel.tsv
+```
+
+When file arguments are omitted, the command discovers `*_otu_table*` and
+`*_mash_dists*` inputs in the current directory. An OTU table passed to a
+distance mode is paired with the corresponding `_mash_dists.txt` file.
+
+The default quantitative Jaccard calculation matches the old
+`vegan::vegdist(..., method="jaccard")` behavior. Use `--jaccard binary` for
+presence/absence Jaccard distances. Standard `mash dist` output is treated as
+distance data directly; the R scripts incorrectly subtracted those values from
+one. `--mash-values similarity` remains available for already-inverted legacy
+files.
+
+`distances.tsv` and `all_distances.tsv` are ready for plotting in R, Python,
+Vega-Lite, a spreadsheet, or another visualization tool without coupling the
+simulation workflow to one graphics stack.
+
 ## Reusing barcode or gene-copy FASTA files
 
 `--reuse` accepts either a normal FASTA file (including wrapped sequences) or a
@@ -156,16 +188,19 @@ silently appended to stale results.
 ```sh
 sh tests/test_barcode_simulator.sh
 sh tests/test_barcode_experiment.sh
+sh tests/test_barcode_post.sh
 ```
 
 The tests cover FASTA structure, exact mutation counts, seeded generation,
 wrapped FASTA reuse, historical header behavior, validation, `--only` mode,
 each experimental effect, the complete 32-condition factorial, manifests,
-truth tables, and deterministic reruns.
+truth tables, deterministic reruns, quantitative and binary Jaccard distances,
+Mash parsing, and Mantel/Pearson correlations.
 
 ## Historical analysis scripts
 
-The `scripts/` directory contains the original downstream R, QIIME, Mash, and
-cluster-submission scripts used for the 2018 analysis. They are retained as
-historical research artifacts; `Barcode_Experiment` replaces their simulation
-orchestration without requiring GNU tools or a cluster scheduler.
+The `scripts/` directory retains the original QIIME, Mash, and
+cluster-submission scripts used for the 2018 analysis as historical research
+artifacts. `Barcode_Experiment` and `Barcode_Simulator_Post` replace their
+simulation and R orchestration without GNU utilities, a cluster scheduler, R,
+`vegan`, `expss`, or `parallel`.
