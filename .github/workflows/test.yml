@@ -19,7 +19,9 @@ jobs:
         run: sh tests/test_barcode_simulator.sh
       - name: Test experimental effects
         run: sh tests/test_barcode_experiment.sh
-      - name: Test AWK post-processing
+      - name: Test direct AWK distance analysis and SVG graphs
+        run: sh tests/test_barcode_distance.sh
+      - name: Test legacy AWK post-processing
         run: sh tests/test_barcode_post.sh
-      - name: Test paper-style factorial pipeline without R
+      - name: Test standalone factorial pipeline
         run: sh tests/test_paper_pipeline.sh

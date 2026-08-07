@@ -4,8 +4,7 @@ set -eu
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 experiment="$root_dir/Barcode_Experiment"
-post="$root_dir/Barcode_Simulator_Post"
-matrix_builder="$root_dir/tests/build_paper_matrices.awk"
+distance="$root_dir/Barcode_Distance"
 test_dir=$(mktemp -d "${TMPDIR:-/tmp}/barcode-paper.XXXXXX")
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 
@@ -58,7 +57,6 @@ awk -F '\t' '
             treatment_count++
         }
         treatment_rows[$2]++
-        replicate_seen[$2 SUBSEP $3] = 1
         if ($3 > maximum_replicate)
             maximum_replicate = $3
     }
@@ -78,73 +76,63 @@ sample_fastas=$(count_files -name 'paper-*-r???-s???.fasta')
 reference_fastas=$(count_files -name 'paper-*-r???-reference.fasta')
 [ "$reference_fastas" -eq 320 ] || fail "paper design produced $reference_fastas references; expected 320"
 
-set -- paper-*-r???-s???.fasta
-awk -v project=paper -v k=7 -f "$matrix_builder" "$@"
-
-otu_tables=$(count_files -name 'paper-*-r???_otu_table.txt')
-[ "$otu_tables" -eq 320 ] || fail "matrix builder produced $otu_tables OTU tables; expected 320"
-asv_tables=$(count_files -name 'paper-*-r???_asv_otu_table.txt')
-[ "$asv_tables" -eq 320 ] || fail "matrix builder produced $asv_tables ASV tables; expected 320"
-kmer_otu_matrices=$(count_files -name 'paper-*-r???_mash_dists.txt')
-kmer_asv_matrices=$(count_files -name 'paper-*-r???_asv_mash_dists.txt')
-kmer_matrices=$((kmer_otu_matrices + kmer_asv_matrices))
-[ "$kmer_matrices" -eq 640 ] || fail "matrix builder produced $kmer_matrices k-mer matrices; expected 640"
-
-sh "$post" distances \
-    --meta paper-analysis-meta.tsv \
-    --output paper-distances.tsv
+sh "$distance" \
+    --manifest paper-manifest.tsv \
+    --output paper-distances.tsv \
+    --summary paper-distance-summary.tsv \
+    --matrix-prefix paper \
+    --graph paper-distance-summary.svg
 
 result_lines=$(awk 'END { print NR + 0 }' paper-distances.tsv)
-[ "$result_lines" -eq 641 ] || fail "paper analysis has $result_lines rows; expected 641"
+[ "$result_lines" -eq 4801 ] || fail "paper analysis has $result_lines rows; expected 4801"
+summary_lines=$(awk 'END { print NR + 0 }' paper-distance-summary.tsv)
+[ "$summary_lines" -eq 1601 ] || fail "paper summary has $summary_lines rows; expected 1601"
+distance_matrices=$(count_files -name 'paper-*-r???-*-matrix.tsv')
+[ "$distance_matrices" -eq 1600 ] || fail "direct analyzer produced $distance_matrices matrices; expected 1600"
+grep -q '<svg ' paper-distance-summary.svg || fail "paper analysis did not produce an SVG graph"
+grep -q 'Generated entirely by POSIX AWK' paper-distance-summary.svg || fail "paper SVG lacks AWK provenance"
 
 awk -F '\t' '
     NR == 1 { next }
     {
-        if ($3 != 6 || $4 != 15)
+        if ($4 != 6 || $5 != 15)
             exit 1
-        if ($5 == "NA" || $6 == "NA" || $5 < 0 || $5 > 1 || $6 < 0 || $6 > 1)
+        if ($7 < 0 || $7 > 1 || $8 < 0 || $8 > 1)
             exit 1
 
         treatment = $2
-        method = treatment
-        sub(/^.*-/, "", method)
-        sub(/-(OTU|ASV)$/, "", treatment)
-
-        if (method == "ASV") {
+        metric = $6
+        if (metric == "jaccard") {
             if (index(treatment, "E")) {
-                asv_error_sum += $5
-                asv_error_n++
+                error_sum += $7
+                error_n++
             } else {
-                asv_plain_sum += $5
-                asv_plain_n++
+                plain_sum += $7
+                plain_n++
             }
         }
-        if (method == "OTU") {
+        if (metric == "ruzicka") {
             if (index(treatment, "N")) {
-                otu_depth_sum += $5
-                otu_depth_n++
+                depth_sum += $7
+                depth_n++
             } else {
-                otu_fixed_sum += $5
-                otu_fixed_n++
+                fixed_sum += $7
+                fixed_n++
             }
         }
-        if ($7 != "NA")
-            numeric_mantel++
     }
     END {
-        asv_error_mean = asv_error_sum / asv_error_n
-        asv_plain_mean = asv_plain_sum / asv_plain_n
-        otu_depth_mean = otu_depth_sum / otu_depth_n
-        otu_fixed_mean = otu_fixed_sum / otu_fixed_n
-        if (!(asv_error_mean > asv_plain_mean))
+        error_mean = error_sum / error_n
+        plain_mean = plain_sum / plain_n
+        depth_mean = depth_sum / depth_n
+        fixed_mean = fixed_sum / fixed_n
+        if (!(error_mean > plain_mean))
             exit 1
-        if (!(otu_depth_mean > otu_fixed_mean))
+        if (!(depth_mean > fixed_mean))
             exit 1
-        if (numeric_mantel < 320)
-            exit 1
-        printf "Paper-style effect check: ASV E %.6f > %.6f; OTU N %.6f > %.6f\n", \
-               asv_error_mean, asv_plain_mean, otu_depth_mean, otu_fixed_mean
+        printf "Standalone effect check: Jaccard E %.6f > %.6f; Ruzicka N %.6f > %.6f\n", \
+               error_mean, plain_mean, depth_mean, fixed_mean
     }
-' paper-distances.tsv || fail "paper-style error/depth effects were not recovered"
+' paper-distance-summary.tsv || fail "standalone error/depth effects were not recovered"
 
-echo "All paper-style AWK pipeline tests passed (32 conditions x 10 replicates; no R)."
+echo "All standalone AWK pipeline tests passed (32 conditions x 10 replicates; no external analysis software)."
