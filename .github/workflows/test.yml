@@ -19,3 +19,5 @@ jobs:
         run: sh tests/test_barcode_simulator.sh
       - name: Test experimental effects
         run: sh tests/test_barcode_experiment.sh
+      - name: Test AWK post-processing
+        run: sh tests/test_barcode_post.sh
