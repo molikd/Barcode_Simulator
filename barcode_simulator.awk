@@ -20,9 +20,10 @@ BEGIN {
     validate_options()
     if (seed == "") {
         srand()
+        seed_random(int(rand() * 2147483646) + 1)
         reported_seed = "automatic"
     } else {
-        srand(seed)
+        seed_random(seed)
         reported_seed = seed
     }
 
@@ -341,7 +342,18 @@ function truncate_file(path) {
 }
 
 function random_integer(minimum, maximum) {
-    return minimum + int(rand() * (maximum - minimum + 1))
+    return minimum + int(random_unit() * (maximum - minimum + 1))
+}
+
+function seed_random(value) {
+    random_state = value % 2147483647
+    if (random_state <= 0)
+        random_state += 2147483646
+}
+
+function random_unit() {
+    random_state = (random_state * 48271) % 2147483647
+    return random_state / 2147483647
 }
 
 function report() {
