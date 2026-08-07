@@ -23,7 +23,7 @@ Linux and macOS are tested in GitHub Actions. No packages need to be installed.
 ## Quick start
 
 ```sh
-chmod +x Barcode_Simulator Barcode_Experiment Barcode_Simulator_Post
+chmod +x Barcode_Simulator Barcode_Experiment Barcode_Distance Barcode_Simulator_Post
 
 ./Barcode_Simulator \
   --num-fasta 5 \
@@ -124,11 +124,74 @@ Treatment names retain the historical codes (`A`, `C`, `E`, `L`, and `N`),
 with `O` representing the no-effect baseline. Use `--no-truth` when a
 read-level truth table would be unnecessarily large.
 
-## Post-processing without R
+## Direct distance analysis and AWK graphs
+
+`Barcode_Distance` reads the simulated sample FASTAs themselves. It does not
+require QIIME, DADA2, Mash, R, `vegan`, or a plotting package:
+
+```sh
+./Barcode_Distance \
+  --manifest metabarcode-factorial-manifest.tsv \
+  --output metabarcode-distances.tsv \
+  --summary metabarcode-distance-summary.tsv \
+  --matrix-prefix metabarcode \
+  --graph metabarcode-distance-summary.svg
+```
+
+The experiment manifest groups FASTAs by treatment and replicate. For each
+dataset, the analyzer treats each distinct complete barcode sequence as a
+feature and calculates five distances:
+
+| Metric | Uses abundance? | Distance definition |
+| --- | --- | --- |
+| Jaccard | no | one minus shared distinct sequences divided by the union |
+| Ruzicka (quantitative Jaccard) | yes | `1 - sum(min(x,y)) / sum(max(x,y))` |
+| Bray–Curtis | yes | `sum(abs(x-y)) / sum(x+y)` |
+| Cosine | yes | one minus cosine similarity of sequence-count vectors |
+| Hellinger | yes | normalized Euclidean distance between square-root relative abundances |
+
+The command writes:
+
+- one wide pairwise TSV containing all five distances;
+- a tidy per-dataset/per-metric summary TSV;
+- a symmetric square TSV matrix for every dataset and metric; and
+- an SVG heatmap of mean treatment distances.
+
+The SVG is authored directly by POSIX AWK. It is a real vector graph with
+labels, accessible title/description elements, a numeric legend, and per-cell
+values in SVG tooltips; no external graph renderer is invoked. Use
+`--no-matrices` or `--no-graph` to suppress those outputs. The analyzer also
+accepts two or more positional FASTA files for an ad hoc single dataset:
+
+```sh
+./Barcode_Distance --dataset pilot sample-1.fasta sample-2.fasta sample-3.fasta
+```
+
+Wrapped, uncompressed FASTA and DNA/IUPAC sequence characters are supported.
+All output files are replaced safely on rerun.
+
+## Relationship to the 2020 paper
+
+[Molik, Pfrender, and Emrich (2020)](https://doi.org/10.3390/mps3010022)
+is now the conceptual starting point rather than the software specification.
+The paper supplied the A/C/E/L/N experimental factors and the motivation for
+comparing community-distance behavior. Its analysis compared QIIME OTUs,
+DADA2 ASVs, and Mash sketches.
+
+The current standalone workflow deliberately departs from that pipeline. It
+uses complete simulated barcode sequences as features and calculates several
+transparent distances directly in AWK. It does not attempt to reproduce OTU
+clustering, DADA2's error model, Mash's MinHash estimates, or the paper's exact
+numeric results. `Barcode_Experiment --paper` retains the published factorial
+design as a useful preset, while `Barcode_Distance` provides the newer,
+dependency-free analysis.
+
+## Legacy post-processing
 
 `Barcode_Simulator_Post` replaces both `Barcode_Simulator_Post.R` and
-`Barcode_Simulator_Post_Single.R`. It implements their numeric analyses in
-POSIX AWK and writes tidy TSV data instead of opening an R plotting device:
+`Barcode_Simulator_Post_Single.R` for users who already have historical OTU
+tables and Mash output. It is retained for compatibility, but is not required
+by the standalone simulator-to-distance workflow:
 
 ```sh
 # Mean OTU and Mash distances plus the Mantel/Pearson correlation
@@ -152,9 +215,8 @@ distance data directly; the R scripts incorrectly subtracted those values from
 one. `--mash-values similarity` remains available for already-inverted legacy
 files.
 
-`distances.tsv` and `all_distances.tsv` are ready for plotting in R, Python,
-Vega-Lite, a spreadsheet, or another visualization tool without coupling the
-simulation workflow to one graphics stack.
+New analyses should normally use `Barcode_Distance`; this legacy command is
+useful when reanalyzing the original external-pipeline result files.
 
 ## Reusing barcode or gene-copy FASTA files
 
@@ -205,6 +267,7 @@ silently appended to stale results.
 ```sh
 sh tests/test_barcode_simulator.sh
 sh tests/test_barcode_experiment.sh
+sh tests/test_barcode_distance.sh
 sh tests/test_barcode_post.sh
 sh tests/test_paper_pipeline.sh
 ```
@@ -213,26 +276,22 @@ The tests cover FASTA structure, exact mutation counts, seeded generation,
 wrapped FASTA reuse, historical header behavior, validation, `--only` mode,
 each experimental effect, the complete 32-condition factorial, manifests,
 truth tables, deterministic reruns, quantitative and binary Jaccard distances,
-Mash parsing, and Mantel/Pearson correlations.
+all five direct distance formulas, symmetric matrices, SVG graph generation,
+safe output handling, legacy Mash parsing, and Mantel/Pearson correlations.
 
-`test_paper_pipeline.sh` is a no-R, end-to-end regression of the experiment in
-Section 2.3 of the paper. It runs all 32 A/C/E/L/N combinations with all ten
-replicates (320 datasets), derives cluster-count OTU proxies and exact-sequence
-ASV proxies, computes exact k-mer Jaccard distances in POSIX AWK, and sends all
-640 method/dataset pairs through `Barcode_Simulator_Post`. It keeps the full
-factorial and replication structure while scaling samples, read depth, and
-sequence length down for CI. It checks that the error effect increases ASV
-distance and that variable depth increases OTU distance.
-
-This regression validates the AWK workflow and the qualitative effects; it is
-not a claim of bit-for-bit reproduction of the published QIIME, DADA2, and Mash
-outputs. Those tools use clustering, error models, and MinHash sketches rather
-than the deterministic truth-based proxies used by the dependency-free test.
+`test_paper_pipeline.sh` uses the paper's design as a regression scaffold. It
+runs all 32 A/C/E/L/N combinations with all ten replicates (320 datasets), then
+passes the 1,920 FASTAs directly to `Barcode_Distance`. The test verifies 1,600
+square matrices, 4,800 sample pairs, all five metrics, and the AWK-generated
+SVG. It keeps the full factorial and replication structure while scaling
+samples, read depth, and sequence length down for CI. The expected qualitative
+signals are checked using direct Jaccard and Ruzicka distances, explicitly as a
+new standalone analysis rather than a reproduction of the 2020 toolchain.
 
 ## Historical analysis scripts
 
 The `scripts/` directory retains the original QIIME, Mash, and
 cluster-submission scripts used for the 2018 analysis as historical research
 artifacts. `Barcode_Experiment` and `Barcode_Simulator_Post` replace their
-simulation and R orchestration without GNU utilities, a cluster scheduler, R,
-`vegan`, `expss`, or `parallel`.
+simulation and R orchestration. `Barcode_Distance` is the current standalone
+analysis path and needs only POSIX AWK and a POSIX shell.
