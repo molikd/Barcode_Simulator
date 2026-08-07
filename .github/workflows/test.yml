@@ -1,0 +1,21 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  posix-awk:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test core simulator
+        run: sh tests/test_barcode_simulator.sh
+      - name: Test experimental effects
+        run: sh tests/test_barcode_experiment.sh
