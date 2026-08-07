@@ -15,5 +15,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Run regression tests
+      - name: Test core simulator
         run: sh tests/test_barcode_simulator.sh
+      - name: Test experimental effects
+        run: sh tests/test_barcode_experiment.sh
