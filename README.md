@@ -23,7 +23,7 @@ Linux and macOS are tested in GitHub Actions. No packages need to be installed.
 ## Quick start
 
 ```sh
-chmod +x Barcode_Simulator Barcode_Experiment
+chmod +x Barcode_Simulator Barcode_Experiment Barcode_Simulator_Post
 
 ./Barcode_Simulator \
   --num-fasta 5 \
@@ -85,12 +85,29 @@ Generate the baseline and all 31 non-empty combinations as a complete
   --factorial \
   --project metabarcode-factorial \
   --samples 68 \
-  --replicates 100 \
+  --replicates 10 \
   --seed 2020
 ```
 
-The defaults reproduce the levels in the published experiment, but every
-level is configurable; run `./Barcode_Experiment --help` for the full set.
+The ordinary defaults reproduce the levels in the historical
+`Run_Simulation.sh` (`136` fixed reads or `14`–`1360` variable reads). The
+paper describes a tenfold depth and a complete 32-condition, 10-replicate
+design. Use the explicit paper profile to generate those 320 datasets:
+
+```sh
+./Barcode_Experiment \
+  --paper \
+  --project metabarcode-paper \
+  --seed 2020 \
+  --no-truth
+```
+
+`--paper` selects 68 samples, 68 clusters, 10 variants per cluster, 1360 fixed
+reads or 140–13,600 variable reads, 500 bp baseline sequences, 350–500 bp
+variable sequences, 1–10 errors, and the full factorial. This manuscript-scale
+run writes tens of gigabytes of FASTA, so plan storage accordingly. Every
+level remains configurable; explicit size options override the profile.
+Run `./Barcode_Experiment --help` for the full set.
 Sampling in experiment mode is with replacement, representing sequencing
 reads. Reference templates are paired within each replicate, and abundance or
 depth changes do not regenerate the underlying variant pool.
@@ -189,6 +206,7 @@ silently appended to stale results.
 sh tests/test_barcode_simulator.sh
 sh tests/test_barcode_experiment.sh
 sh tests/test_barcode_post.sh
+sh tests/test_paper_pipeline.sh
 ```
 
 The tests cover FASTA structure, exact mutation counts, seeded generation,
@@ -196,6 +214,20 @@ wrapped FASTA reuse, historical header behavior, validation, `--only` mode,
 each experimental effect, the complete 32-condition factorial, manifests,
 truth tables, deterministic reruns, quantitative and binary Jaccard distances,
 Mash parsing, and Mantel/Pearson correlations.
+
+`test_paper_pipeline.sh` is a no-R, end-to-end regression of the experiment in
+Section 2.3 of the paper. It runs all 32 A/C/E/L/N combinations with all ten
+replicates (320 datasets), derives cluster-count OTU proxies and exact-sequence
+ASV proxies, computes exact k-mer Jaccard distances in POSIX AWK, and sends all
+640 method/dataset pairs through `Barcode_Simulator_Post`. It keeps the full
+factorial and replication structure while scaling samples, read depth, and
+sequence length down for CI. It checks that the error effect increases ASV
+distance and that variable depth increases OTU distance.
+
+This regression validates the AWK workflow and the qualitative effects; it is
+not a claim of bit-for-bit reproduction of the published QIIME, DADA2, and Mash
+outputs. Those tools use clustering, error models, and MinHash sketches rather
+than the deterministic truth-based proxies used by the dependency-free test.
 
 ## Historical analysis scripts
 
