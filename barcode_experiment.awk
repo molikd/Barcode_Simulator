@@ -9,6 +9,7 @@
 BEGIN {
     stderr = "/dev/stderr"
     set_defaults()
+    detect_profiles()
     parse_arguments()
 
     if (show_help) {
@@ -53,6 +54,27 @@ function set_defaults() {
     show_help = 0
 }
 
+function detect_profiles(    i) {
+    for (i = 1; i < ARGC; i++) {
+        if (ARGV[i] == "--paper") {
+            paper_profile = 1
+            factorial = 1
+            samples = 68
+            replicates = 10
+            clusters = 68
+            variants_per_cluster = 10
+            fixed_depth = 1360
+            min_depth = 140
+            max_depth = 13600
+            baseline_length = 500
+            min_variable_length = 350
+            max_variable_length = 500
+            min_errors = 1
+            max_errors = 10
+        }
+    }
+}
+
 function parse_arguments(    i, argument, option, value, equals_at) {
     for (i = 1; i < ARGC; i++) {
         argument = ARGV[i]
@@ -77,6 +99,8 @@ function parse_arguments(    i, argument, option, value, equals_at) {
                 factorial = 1
                 continue
             }
+            if (option == "--paper")
+                continue
             if (option == "--no-truth") {
                 write_truth = 0
                 continue
@@ -536,7 +560,8 @@ function clear_array(array,    key) {
 
 function report() {
     print "Barcode Experiment complete" > stderr
-    print "  design: " (factorial ? "full 2^5 factorial" : treatment_code(selected_code)) > stderr
+    print "  design: " (paper_profile ? "Molik et al. (2020) 2^5 factorial" : \
+          (factorial ? "full 2^5 factorial" : treatment_code(selected_code))) > stderr
     print "  samples: " generated_samples > stderr
     print "  reads: " generated_reads > stderr
     print "  manifest: " manifest_file > stderr
@@ -557,6 +582,7 @@ function usage() {
     print "  -N, --variable-depth     vary sample depth from 14-1360 reads"
     print "      --effects LIST       comma-separated effect names, 'all', or 'none'"
     print "      --factorial          generate baseline plus all 31 effect combinations"
+    print "      --paper              Section 2.3 profile: 32 conditions x 10 replicates"
     print ""
     print "Design size and naming:"
     print "  -P, --project PREFIX     output prefix (default: experiment)"
@@ -577,6 +603,10 @@ function usage() {
     print "      --min-errors N       error-effect minimum (default: 1)"
     print "      --max-errors N       error-effect maximum (default: 10)"
     print "      --conserved-sequence DNA  shared prefix"
+    print ""
+    print "The --paper profile uses 68 samples, 68 clusters, 10 variants per cluster,"
+    print "1360 fixed reads, 140-13600 variable reads, and the published sequence"
+    print "length/error levels. Explicit size and effect-level options may override it."
     print ""
     print "Provenance outputs:"
     print "      --manifest FILE      sample-level design table"
