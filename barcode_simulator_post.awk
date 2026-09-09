@@ -31,6 +31,9 @@ BEGIN {
         fail("unknown mode: " mode)
 
     close_output()
+    report()
+    if (run_metadata != "")
+        write_run_metadata()
     exit 0
 }
 
@@ -41,6 +44,8 @@ function set_defaults() {
     jaccard_mode = "quantitative"
     mash_values = "distance"
     show_help = 0
+    loglevel = 2
+    run_metadata = ""
 }
 
 function parse_arguments(    i, argument, option, value, equals_at) {
@@ -88,6 +93,10 @@ function set_option(option, value) {
         jaccard_mode = tolower(value)
     else if (option == "--mash-values")
         mash_values = tolower(value)
+    else if (option == "--loglevel")
+        parse_loglevel(value)
+    else if (option == "--run-metadata")
+        run_metadata = value
     else
         fail("unknown option: " option)
 }
@@ -123,6 +132,83 @@ function prepare_output() {
         printf "%s", "" > output_file
         close(output_file)
     }
+}
+
+function parse_loglevel(value) {
+    value = tolower(value)
+    if (value == "error")
+        loglevel = 0
+    else if (value == "warning" || value == "warn")
+        loglevel = 1
+    else if (value == "info")
+        loglevel = 2
+    else if (value == "debug")
+        loglevel = 3
+    else
+        fail("--loglevel must be error, warning, info, or debug (received '" value "')")
+}
+
+function log_message(level, text) {
+    if (level == "debug" && loglevel < 3)
+        return
+    if (level == "info" && loglevel < 2)
+        return
+    if (level == "warning" && loglevel < 1)
+        return
+    print text > stderr
+}
+
+function json_escape(text) {
+    gsub(/\\/, "\\\\", text)
+    gsub(/"/, "\\\"", text)
+    gsub(/\n/, "\\n", text)
+    gsub(/\r/, "\\r", text)
+    gsub(/\t/, "\\t", text)
+    return text
+}
+
+function run_stamp(    command, status, line) {
+    command = "date -u +%Y-%m-%dT%H:%M:%SZ"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+function run_platform(    command, status, line) {
+    command = "uname -srm"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+function report() {
+    log_message("info", "Barcode_Simulator_Post complete")
+    log_message("info", "  mode: " mode)
+    log_message("info", "  inputs: " input_count)
+    log_message("info", "  output: " output_file)
+}
+
+function write_run_metadata(    json) {
+    json = "{\"tool\": \"Barcode_Simulator_Post\", "
+    json = json "\"timestamp\": \"" json_escape(run_stamp()) "\", "
+    json = json "\"platform\": \"" json_escape(run_platform()) "\", "
+    json = json "\"parameters\": {" \
+        "\"mode\": \"" json_escape(mode) "\", " \
+        "\"jaccard\": \"" json_escape(jaccard_mode) "\", " \
+        "\"mash_values\": \"" json_escape(mash_values) "\"}, "
+    json = json "\"inputs\": " input_count ", "
+    json = json "\"output\": \"" json_escape(output_file) "\"}"
+    printf "%s", "" > run_metadata
+    close(run_metadata)
+    print json >> run_metadata
+    close(run_metadata)
+    log_message("info", "  run metadata: " run_metadata)
 }
 
 function run_distances(all_points,    i, otu_file, mash_file, dataset, type_name, samples_count, mean_otu, mean_mash, correlation, a, b, key) {
@@ -595,6 +681,8 @@ function usage() {
     print "  --meta FILE               File/Type metadata table ('none' to disable)"
     print "  --jaccard MODE            quantitative (R-compatible) or binary"
     print "  --mash-values MODE        distance (standard Mash) or similarity"
+    print "  --loglevel LEVEL          error, warning, info (default), or debug"
+    print "  --run-metadata FILE       write a JSON run sidecar"
     print "  -h, --help                show this help"
     print ""
     print "If files are omitted, *_otu_table* and *_mash_dists* files are discovered"

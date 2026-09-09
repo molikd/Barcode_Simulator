@@ -32,6 +32,8 @@ BEGIN {
     if (write_graph)
         write_svg_graph(graph_file)
     report()
+    if (run_metadata != "")
+        write_run_metadata()
     exit 0
 }
 
@@ -52,6 +54,8 @@ function initialize_metrics() {
     graph_file = ""
     dataset_label = "dataset"
     show_help = 0
+    loglevel = 2
+    run_metadata = ""
 }
 
 function parse_arguments(    argument_index, argument, option, value, equals_at) {
@@ -106,6 +110,10 @@ function set_option(option, value) {
         graph_file = value
     else if (option == "--dataset")
         dataset_label = value
+    else if (option == "--loglevel")
+        parse_loglevel(value)
+    else if (option == "--run-metadata")
+        run_metadata = value
     else
         fail("unknown option: " option)
 }
@@ -113,6 +121,7 @@ function set_option(option, value) {
 function set_output_defaults(    name) {
     if (manifest_file != "") {
         name = base_name(manifest_file)
+        sub(/[.]gz$/, "", name)
         sub(/-manifest[.]tsv$/, "", name)
         sub(/[.]tsv$/, "", name)
     } else
@@ -162,10 +171,116 @@ function prepare_outputs() {
     close(summary_file)
 }
 
+function parse_loglevel(value) {
+    value = tolower(value)
+    if (value == "error")
+        loglevel = 0
+    else if (value == "warning" || value == "warn")
+        loglevel = 1
+    else if (value == "info")
+        loglevel = 2
+    else if (value == "debug")
+        loglevel = 3
+    else
+        fail("--loglevel must be error, warning, info, or debug (received '" value "')")
+}
+
+function log_message(level, text) {
+    if (level == "debug" && loglevel < 3)
+        return
+    if (level == "info" && loglevel < 2)
+        return
+    if (level == "warning" && loglevel < 1)
+        return
+    print text > stderr
+}
+
+function shell_quote(text) {
+    gsub(/'/, "'\\''", text)
+    return "'" text "'"
+}
+
+function json_escape(text) {
+    gsub(/\\/, "\\\\", text)
+    gsub(/"/, "\\\"", text)
+    gsub(/\n/, "\\n", text)
+    gsub(/\r/, "\\r", text)
+    gsub(/\t/, "\\t", text)
+    return text
+}
+
+function run_stamp(    command, status, line) {
+    command = "date -u +%Y-%m-%dT%H:%M:%SZ"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+function run_platform(    command, status, line) {
+    command = "uname -srm"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+# Transparent input reader: plain files use getline, *.gz files stream
+# through gzip -dc so compressed inputs just work.
+function open_read(path) {
+    read_is_pipe = (path ~ /[.]gz$/)
+    if (read_is_pipe)
+        read_source = "gzip -dc -- " shell_quote(path)
+    else
+        read_source = path
+}
+
+function read_next(    status) {
+    if (read_is_pipe)
+        status = (read_source | getline read_line)
+    else
+        status = (getline read_line < read_source)
+    return status
+}
+
+function read_close() {
+    close(read_source)
+    read_is_pipe = 0
+}
+
+function write_run_metadata(    json) {
+    json = "{\"tool\": \"Barcode_Distance\", "
+    json = json "\"timestamp\": \"" json_escape(run_stamp()) "\", "
+    json = json "\"platform\": \"" json_escape(run_platform()) "\", "
+    if (manifest_file != "")
+        json = json "\"manifest\": \"" json_escape(manifest_file) "\", "
+    else
+        json = json "\"positional_inputs\": " positional_count ", "
+    json = json "\"datasets\": " analyzed_datasets ", "
+    json = json "\"samples\": " analyzed_samples ", "
+    json = json "\"pairwise_output\": \"" json_escape(output_file) "\", "
+    json = json "\"summary_output\": \"" json_escape(summary_file) "\""
+    if (write_matrices)
+        json = json ", \"matrix_prefix\": \"" json_escape(matrix_prefix) "\""
+    if (write_graph)
+        json = json ", \"graph\": \"" json_escape(graph_file) "\""
+    json = json "}"
+    truncate_file(run_metadata)
+    print json >> run_metadata
+    close(run_metadata)
+    log_message("info", "  run metadata: " run_metadata)
+}
+
 function load_manifest(path,    status, line, fields, field_count, header_seen, file_column, treatment_column, replicate_column, sample_column, field_index, file_path, treatment, replicate, sample, dataset, sample_key) {
     manifest_directory = directory_name(path)
     input_path_seen[path_key(path)] = 1
-    while ((status = getline line < path) > 0) {
+    open_read(path)
+    while ((status = read_next()) > 0) {
+        line = read_line
         sub(/\r$/, "", line)
         if (line ~ /^[[:space:]]*$/)
             continue
@@ -210,7 +325,7 @@ function load_manifest(path,    status, line, fields, field_count, header_seen, 
         dataset_sample[dataset SUBSEP design_sample_count[dataset]] = sample
         dataset_file[dataset SUBSEP design_sample_count[dataset]] = file_path
     }
-    close(path)
+    read_close()
 
     if (status < 0)
         fail("could not read manifest: " path)
@@ -273,6 +388,7 @@ function analyze_design(    dataset_index, dataset, sample_index, sample, path) 
         dataset = dataset_name[dataset_index]
         current_dataset = dataset
         current_sample_count = design_sample_count[dataset]
+        log_message("debug", "Barcode_Distance: analyzing dataset " dataset)
 
         for (sample_index = 1; sample_index <= current_sample_count; sample_index++) {
             sample = dataset_sample[dataset SUBSEP sample_index]
@@ -280,6 +396,8 @@ function analyze_design(    dataset_index, dataset, sample_index, sample, path) 
             current_sample[sample_index] = sample
             load_fasta(path, sample)
         }
+        log_message("debug", "Barcode_Distance: dataset " dataset ": " \
+                    current_sample_count " samples, " feature_count " distinct features")
 
         calculate_dataset_distances(dataset)
         if (write_matrices)
@@ -291,15 +409,33 @@ function analyze_design(    dataset_index, dataset, sample_index, sample, path) 
     }
 }
 
-function load_fasta(path, sample,    status, line, sequence, header_seen, records) {
-    if (path ~ /[.]gz$/)
-        fail("compressed FASTA is not supported; decompress it first: " path)
+function load_fasta(path, sample,    status, line, sequence, header_seen, records, quality) {
+    open_read(path)
+
+    # Find the first record; blank and ";" comment lines are skipped.
+    line = ""
+    while ((status = read_next()) > 0) {
+        line = read_line
+        sub(/\r$/, "", line)
+        if (line ~ /^[[:space:]]*$/ || line ~ /^;/)
+            continue
+        break
+    }
+    if (status < 0)
+        fail("could not read FASTA: " path)
+    if (status == 0)
+        fail("FASTA contains no records: " path)
+
+    if (line ~ /^@/) {
+        load_fastq_records(path, sample, line)
+        read_close()
+        return
+    }
+
     sequence = ""
     header_seen = 0
     records = 0
-
-    while ((status = getline line < path) > 0) {
-        sub(/\r$/, "", line)
+    while (1) {
         if (line ~ /^>/) {
             if (header_seen) {
                 add_sequence(sample, sequence, path)
@@ -307,16 +443,20 @@ function load_fasta(path, sample,    status, line, sequence, header_seen, record
             }
             header_seen = 1
             sequence = ""
-            continue
+        } else if (line ~ /^;/ || line ~ /^[[:space:]]*$/) {
+            # skip comments and blanks
+        } else {
+            if (!header_seen)
+                fail("FASTA sequence appears before its first header: " path)
+            gsub(/[[:space:]]/, "", line)
+            sequence = sequence toupper(line)
         }
-        if (line ~ /^;/ || line ~ /^[[:space:]]*$/)
-            continue
-        if (!header_seen)
-            fail("FASTA sequence appears before its first header: " path)
-        gsub(/[[:space:]]/, "", line)
-        sequence = sequence toupper(line)
+        if ((status = read_next()) <= 0)
+            break
+        line = read_line
+        sub(/\r$/, "", line)
     }
-    close(path)
+    read_close()
 
     if (status < 0)
         fail("could not read FASTA: " path)
@@ -326,6 +466,47 @@ function load_fasta(path, sample,    status, line, sequence, header_seen, record
     }
     if (records == 0)
         fail("FASTA contains no records: " path)
+}
+
+function load_fastq_records(path, sample,    status, line, sequence, quality, records) {
+    # FASTQ inputs use positional four-line records; the header line was
+    # already consumed by the caller. Quality strings must agree with their
+    # sequence (wrapped FASTQ is not supported); qualities themselves are
+    # ignored because distances use complete sequences as features.
+    records = 0
+    while (1) {
+        if ((status = read_next()) <= 0)
+            fail("truncated FASTQ record in " path)
+        sequence = read_line
+        sub(/\r$/, "", sequence)
+        gsub(/[[:space:]]/, "", sequence)
+        if ((status = read_next()) <= 0)
+            fail("truncated FASTQ record in " path)
+        if (read_line !~ /^\+/)
+            fail("expected '+' line in FASTQ record: " path)
+        if ((status = read_next()) <= 0)
+            fail("truncated FASTQ record in " path)
+        quality = read_line
+        sub(/\r$/, "", quality)
+        if (length(quality) != length(sequence))
+            fail("FASTQ quality length differs from sequence length (wrapped FASTQ is not supported): " path)
+        add_sequence(sample, toupper(sequence), path)
+        records++
+
+        if ((status = read_next()) <= 0)
+            break
+        line = read_line
+        sub(/\r$/, "", line)
+        if (line ~ /^[[:space:]]*$/)
+            fail("blank line inside FASTQ data: " path)
+        if (line !~ /^@/)
+            fail("expected FASTQ header starting with '@': " path)
+    }
+
+    if (status < 0)
+        fail("could not read FASTQ: " path)
+    if (records == 0)
+        fail("FASTQ contains no records: " path)
 }
 
 function add_sequence(sample, sequence, path,    feature_key) {
@@ -568,7 +749,7 @@ function base_name(path) {
 function sample_name_from_path(path,    name) {
     name = base_name(path)
     sub(/[.]gz$/, "", name)
-    sub(/[.](fasta|fa|fna|fas)$/, "", name)
+    sub(/[.](fasta|fa|fna|fas|fastq|fq)$/, "", name)
     if (name == "")
         fail("could not derive a sample name from: " path)
     return name
@@ -641,15 +822,15 @@ function clear_array(array,    key) {
 }
 
 function report() {
-    print "Barcode Distance complete" > stderr
-    print "  datasets: " analyzed_datasets > stderr
-    print "  samples: " analyzed_samples > stderr
-    print "  pairwise distances: " output_file > stderr
-    print "  summary: " summary_file > stderr
+    log_message("info", "Barcode Distance complete")
+    log_message("info", "  datasets: " analyzed_datasets)
+    log_message("info", "  samples: " analyzed_samples)
+    log_message("info", "  pairwise distances: " output_file)
+    log_message("info", "  summary: " summary_file)
     if (write_matrices)
-        print "  matrices: " written_matrices " (prefix " matrix_prefix ")" > stderr
+        log_message("info", "  matrices: " written_matrices " (prefix " matrix_prefix ")")
     if (write_graph)
-        print "  graph: " graph_file > stderr
+        log_message("info", "  graph: " graph_file)
 }
 
 function usage() {
@@ -671,7 +852,14 @@ function usage() {
     print "      --graph FILE          AWK-generated SVG distance heatmap"
     print "      --no-matrices         suppress square matrix files"
     print "      --no-graph            suppress the SVG heatmap"
+    print "      --loglevel LEVEL      error, warning, info (default), or debug"
+    print "      --run-metadata FILE   write a JSON run sidecar"
     print "  -h, --help                show this help"
+    print ""
+    print "Inputs may be plain or gzip-compressed (.gz) FASTA or FASTQ. FASTQ"
+    print "records use positional four-line records; qualities must agree with"
+    print "their sequence (wrapped FASTQ is not supported) and are otherwise"
+    print "ignored."
     print ""
     print "Metrics: binary Jaccard, quantitative Jaccard/Ruzicka, Bray-Curtis,"
     print "cosine distance, and Hellinger distance. All use full barcode sequences"
