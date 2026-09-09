@@ -25,3 +25,5 @@ jobs:
         run: sh tests/test_barcode_post.sh
       - name: Test standalone factorial pipeline
         run: sh tests/test_paper_pipeline.sh
+      - name: Test ReadMixer-inspired upgrades
+        run: sh tests/test_upgrades.sh

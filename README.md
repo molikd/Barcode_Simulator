@@ -19,6 +19,8 @@ The lower-level simulator can vary:
 - a POSIX shell for the `Barcode_Simulator` launcher and test suite.
 
 Linux and macOS are tested in GitHub Actions. No packages need to be installed.
+`gzip` is only needed for transparent `.gz` input reading and `--gzip`
+outputs; everything else is dependency-free.
 
 ## Quick start
 
@@ -48,6 +50,28 @@ Run `./Barcode_Simulator --help` for the complete option list. The old options,
 including `--total-otus`, `--number-of-seq-per-otu`, and
 `--max-number-otus-per-file`, remain supported. New aliases use the more literal
 terms “cluster” and “sequence.”
+
+## Output formats, compression, and run control
+
+All four tools accept `--loglevel error|warning|info|debug` (default `info`,
+which preserves the previous stderr report) and `--run-metadata FILE`, which
+writes a JSON sidecar recording effective parameters, seed, platform, and
+outputs written. The simulators additionally share:
+
+- `--format fasta|fastq`: FASTQ records reuse the FASTA headers with
+  synthetic uniform Q40 qualities (`I`). The tools model sequences, not
+  instrument error, so every base gets the same high score.
+- `--gzip`: compress sequence outputs with `gzip` (provenance TSVs stay
+  plain text).
+- `--dry-run`: print expected outputs and disk needs without writing files.
+- Automatic disk-space preflight before writing (`--no-disk-check` skips it).
+
+`Barcode_Simulator` also supports `--max-bytes-per-fasta N` output splitting
+(`NAME-1.part000.fasta`, …; `0` means unlimited) and transparent `.gz`
+`--reuse` inputs. `Barcode_Distance` reads plain or `.gz` FASTA and FASTQ
+inputs; FASTQ qualities must agree with their sequence (wrapped FASTQ is not
+supported) and are otherwise ignored. See `docs/definitions.md` for the
+glossary and `docs/benchmarks.md` for measured performance.
 
 ## Experimental effects and factorial designs
 
@@ -167,8 +191,8 @@ accepts two or more positional FASTA files for an ad hoc single dataset:
 ./Barcode_Distance --dataset pilot sample-1.fasta sample-2.fasta sample-3.fasta
 ```
 
-Wrapped, uncompressed FASTA and DNA/IUPAC sequence characters are supported.
-All output files are replaced safely on rerun.
+Wrapped FASTA (plain or `.gz`) and FASTQ inputs with DNA/IUPAC sequence
+characters are supported. All output files are replaced safely on rerun.
 
 ## Relationship to the 2020 paper
 
@@ -249,6 +273,9 @@ reference. Output sequences are selected with a Fisher–Yates shuffle.
 Both runners use an internal Park–Miller pseudorandom-number generator rather
 than AWK's implementation-defined `rand()`. A supplied `--seed` therefore makes
 the sequence and sampling streams reproducible across POSIX AWK implementations.
+Cryptographic randomness is deliberately not used: unpredictability would
+destroy reproducibility for no scientific gain (see
+`docs/lessons-from-readmixer.md`).
 
 ## Outputs
 
@@ -270,7 +297,10 @@ sh tests/test_barcode_experiment.sh
 sh tests/test_barcode_distance.sh
 sh tests/test_barcode_post.sh
 sh tests/test_paper_pipeline.sh
+sh tests/test_upgrades.sh
 ```
+
+See `TESTING.md` for what each suite covers and the conventions for new tests.
 
 The tests cover FASTA structure, exact mutation counts, seeded generation,
 wrapped FASTA reuse, historical header behavior, validation, `--only` mode,
@@ -295,3 +325,16 @@ cluster-submission scripts used for the 2018 analysis as historical research
 artifacts. `Barcode_Experiment` and `Barcode_Simulator_Post` replace their
 simulation and R orchestration. `Barcode_Distance` is the current standalone
 analysis path and needs only POSIX AWK and a POSIX shell.
+
+## Related work and upgrade notes
+
+[Lessons from ReadMixer](docs/lessons-from-readmixer.md) records the review
+of <https://github.com/Geneinfosec-Inc/ReadMixer> requested in
+[issue #4](https://github.com/molikd/Barcode_Simulator/issues/4) and the
+potential Barcode_Simulator upgrades it suggests (disk preflight, streaming
+and output splitting, leveled logging, gzip/FASTQ handling, run metadata,
+benchmarks, and scholarly-hygiene files). All roadmap items are implemented;
+see [CHANGES.md](CHANGES.md), [TESTING.md](TESTING.md),
+[benchmarks](docs/benchmarks.md), and the [glossary](docs/definitions.md).
+`CITATION.cff` provides the preferred citation and `ARCHIVAL_STRATEGY.md`
+the preservation plan.

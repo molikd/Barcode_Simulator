@@ -18,9 +18,17 @@ BEGIN {
     }
 
     validate_options()
+    if (dry_run) {
+        dry_run_report()
+        exit 0
+    }
+    if (!no_disk_check)
+        disk_preflight(estimate_worst_bytes())
     prepare_outputs()
     run_design()
     report()
+    if (run_metadata != "")
+        write_run_metadata()
     exit 0
 }
 
@@ -52,6 +60,12 @@ function set_defaults() {
     truth_file = ""
     header_modifier = "sequence"
     show_help = 0
+    loglevel = 2
+    dry_run = 0
+    no_disk_check = 0
+    output_format = "fasta"
+    use_gzip = 0
+    run_metadata = ""
 }
 
 function detect_profiles(    i) {
@@ -103,6 +117,18 @@ function parse_arguments(    i, argument, option, value, equals_at) {
                 continue
             if (option == "--no-truth") {
                 write_truth = 0
+                continue
+            }
+            if (option == "--dry-run") {
+                dry_run = 1
+                continue
+            }
+            if (option == "--no-disk-check") {
+                no_disk_check = 1
+                continue
+            }
+            if (option == "--gzip") {
+                use_gzip = 1
                 continue
             }
             if (is_long_effect_flag(option)) {
@@ -217,7 +243,13 @@ function set_option(option, value) {
     else if (option == "--truth") {
         truth_file = value
         write_truth = 1
-    } else
+    } else if (option == "--loglevel")
+        parse_loglevel(value)
+    else if (option == "--format")
+        set_output_format(value)
+    else if (option == "--run-metadata")
+        run_metadata = value
+    else
         fail("unknown option: " option)
 }
 
@@ -290,6 +322,282 @@ function validate_options() {
         fail("conserved sequence must contain DNA/IUPAC characters")
 }
 
+function parse_loglevel(value) {
+    value = tolower(value)
+    if (value == "error")
+        loglevel = 0
+    else if (value == "warning" || value == "warn")
+        loglevel = 1
+    else if (value == "info")
+        loglevel = 2
+    else if (value == "debug")
+        loglevel = 3
+    else
+        fail("--loglevel must be error, warning, info, or debug (received '" value "')")
+}
+
+function set_output_format(value) {
+    value = tolower(value)
+    if (value != "fasta" && value != "fastq")
+        fail("--format must be 'fasta' or 'fastq' (received '" value "')")
+    output_format = value
+}
+
+function log_message(level, text) {
+    if (level == "debug" && loglevel < 3)
+        return
+    if (level == "info" && loglevel < 2)
+        return
+    if (level == "warning" && loglevel < 1)
+        return
+    print text > stderr
+}
+
+function shell_quote(text) {
+    gsub(/'/, "'\\''", text)
+    return "'" text "'"
+}
+
+function format_bytes(count,    unit) {
+    if (count < 1024)
+        return sprintf("%d B", count)
+    count /= 1024
+    if (count < 1024)
+        return sprintf("%.1f KB", count)
+    count /= 1024
+    if (count < 1024)
+        return sprintf("%.1f MB", count)
+    count /= 1024
+    if (count < 1024)
+        return sprintf("%.1f GB", count)
+    count /= 1024
+    return sprintf("%.1f TB", count)
+}
+
+function disk_free_bytes(directory,    command, status, line, seen_header, fields, available) {
+    command = "df -P " shell_quote(directory)
+    seen_header = 0
+    available = -1
+    while ((status = (command | getline line)) > 0) {
+        if (!seen_header) {
+            seen_header = 1
+            continue
+        }
+        if (split(line, fields) >= 4 && fields[4] ~ /^[0-9]+$/)
+            available = fields[4] * 1024
+        break
+    }
+    close(command)
+    if (status < 0 || !seen_header)
+        return -1
+    return available
+}
+
+function disk_preflight(needed,    free, margin) {
+    margin = int(needed * 1.1) + 1
+    free = disk_free_bytes(".")
+    if (free < 0) {
+        log_message("warning", "Barcode_Experiment: could not determine free disk space; continuing")
+        return
+    }
+    if (margin > free)
+        fail("insufficient disk space: need ~" format_bytes(margin) ", have " \
+             format_bytes(free) " (use --no-disk-check to override)")
+    log_message("info", "  disk check: need ~" format_bytes(margin) ", free " format_bytes(free))
+}
+
+function json_escape(text) {
+    gsub(/\\/, "\\\\", text)
+    gsub(/"/, "\\\"", text)
+    gsub(/\n/, "\\n", text)
+    gsub(/\r/, "\\r", text)
+    gsub(/\t/, "\\t", text)
+    return text
+}
+
+function run_stamp(    command, status, line) {
+    command = "date -u +%Y-%m-%dT%H:%M:%SZ"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+function run_platform(    command, status, line) {
+    command = "uname -srm"
+    if ((status = (command | getline line)) > 0) {
+        close(command)
+        return line
+    }
+    close(command)
+    return "unknown"
+}
+
+function sequence_extension(    extension) {
+    extension = (output_format == "fastq" ? ".fastq" : ".fasta")
+    if (use_gzip)
+        extension = extension ".gz"
+    return extension
+}
+
+function out_begin(path) {
+    out_path = path
+    if (use_gzip) {
+        out_cmd = "gzip -9 -- > " shell_quote(path)
+    } else {
+        truncate_file(path)
+        out_cmd = ""
+    }
+    out_files[++out_file_count] = path
+}
+
+function out_line(text) {
+    if (out_cmd == "")
+        print text >> out_path
+    else
+        print text | out_cmd
+}
+
+function out_end() {
+    if (out_cmd == "")
+        close(out_path)
+    else
+        close(out_cmd)
+    out_cmd = ""
+}
+
+function quality_string(sequence_length,    block) {
+    # Uniform synthetic Q40 qualities. Barcode_Experiment models sequences,
+    # not instrument error, so every base receives the same high score.
+    if (sequence_length > length(quality_block)) {
+        block = sprintf("%*s", sequence_length, "")
+        gsub(/ /, "I", block)
+        quality_block = block
+    }
+    return substr(quality_block, 1, sequence_length)
+}
+
+function treatment_total() {
+    return factorial ? 32 : 1
+}
+
+function expected_depth(    variable_mid) {
+    variable_mid = (min_depth + max_depth) / 2
+    if (factorial)
+        return (fixed_depth + variable_mid) / 2
+    if (has_effect(selected_code, 16))
+        return variable_mid
+    return fixed_depth
+}
+
+function worst_depth() {
+    if (factorial)
+        return fixed_depth > max_depth ? fixed_depth : max_depth
+    if (has_effect(selected_code, 16))
+        return max_depth
+    return fixed_depth
+}
+
+function expected_seq_length(    variable_mid, conserved_part) {
+    variable_mid = (min_variable_length + max_variable_length) / 2
+    conserved_part = length(conserved_sequence)
+    if (factorial)
+        return (baseline_length + variable_mid) / 2 + conserved_part / 2
+    return (has_effect(selected_code, 8) ? variable_mid : baseline_length) + \
+           (has_effect(selected_code, 2) ? conserved_part : 0)
+}
+
+function worst_seq_length(    longest) {
+    if (factorial || has_effect(selected_code, 8))
+        longest = baseline_length > max_variable_length ? baseline_length : max_variable_length
+    else
+        longest = baseline_length
+    if (factorial || has_effect(selected_code, 2))
+        longest += length(conserved_sequence)
+    return longest
+}
+
+function estimate_reads(expected) {
+    if (expected)
+        return int(treatment_total() * replicates * samples * expected_depth())
+    return treatment_total() * replicates * samples * worst_depth()
+}
+
+function estimate_sample_bytes(expected,    depth, seq_length, overhead) {
+    depth = expected ? expected_depth() : worst_depth()
+    seq_length = expected ? expected_seq_length() : worst_seq_length()
+    overhead = (output_format == "fastq" ? seq_length + 116 : 113)
+    return int(treatment_total() * replicates * samples * depth * (seq_length + overhead))
+}
+
+function estimate_worst_bytes(    references) {
+    references = treatment_total() * replicates * clusters * (worst_seq_length() + 40)
+    if (write_truth)
+        references += estimate_reads(0) * 90
+    return estimate_sample_bytes(0) + references + \
+           treatment_total() * replicates * samples * 200
+}
+
+function dry_run_report(    expected_reads, worst_reads, expected, worst, free) {
+    expected_reads = estimate_reads(1)
+    worst_reads = estimate_reads(0)
+    expected = estimate_sample_bytes(1) + (write_truth ? expected_reads * 90 : 0)
+    worst = estimate_worst_bytes()
+    print "Barcode_Experiment dry run (no files written)" > stderr
+    print "  design: " (paper_profile ? "Molik et al. (2020) 2^5 factorial" : \
+          (factorial ? "full 2^5 factorial" : treatment_code(selected_code))) > stderr
+    print "  format: " output_format (use_gzip ? " (gzipped)" : "") > stderr
+    print "  treatments: " treatment_total() > stderr
+    print "  samples: " (treatment_total() * replicates * samples) > stderr
+    print "  reads: ~" expected_reads " expected, " worst_reads " worst case" > stderr
+    print "  expected output: ~" format_bytes(expected) > stderr
+    print "  worst-case output: ~" format_bytes(worst) > stderr
+    free = disk_free_bytes(".")
+    if (free < 0)
+        print "  free disk space: unknown" > stderr
+    else
+        print "  free disk space: " format_bytes(free) > stderr
+}
+
+function write_run_metadata(    json) {
+    json = "{\"tool\": \"Barcode_Experiment\", "
+    json = json "\"timestamp\": \"" json_escape(run_stamp()) "\", "
+    json = json "\"platform\": \"" json_escape(run_platform()) "\", "
+    json = json "\"seed\": \"" json_escape(seed) "\", "
+    json = json "\"parameters\": {" \
+        "\"project\": \"" json_escape(project_name) "\", " \
+        "\"factorial\": " (factorial ? "true" : "false") ", " \
+        "\"paper\": " (paper_profile ? "true" : "false") ", " \
+        "\"effects\": \"" json_escape(treatment_code(selected_code)) "\", " \
+        "\"samples\": " samples ", " \
+        "\"replicates\": " replicates ", " \
+        "\"clusters\": " clusters ", " \
+        "\"variants_per_cluster\": " variants_per_cluster ", " \
+        "\"fixed_depth\": " fixed_depth ", " \
+        "\"min_depth\": " min_depth ", " \
+        "\"max_depth\": " max_depth ", " \
+        "\"baseline_length\": " baseline_length ", " \
+        "\"min_variable_length\": " min_variable_length ", " \
+        "\"max_variable_length\": " max_variable_length ", " \
+        "\"min_errors\": " min_errors ", " \
+        "\"max_errors\": " max_errors ", " \
+        "\"format\": \"" output_format "\", " \
+        "\"gzip\": " (use_gzip ? "true" : "false") ", " \
+        "\"write_truth\": " (write_truth ? "true" : "false") "}, "
+    json = json "\"samples_written\": " generated_samples ", "
+    json = json "\"reads_written\": " generated_reads ", "
+    json = json "\"manifest\": \"" json_escape(manifest_file) "\""
+    if (write_truth)
+        json = json ", \"truth\": \"" json_escape(truth_file) "\""
+    json = json "}"
+    truncate_file(run_metadata)
+    print json >> run_metadata
+    close(run_metadata)
+    log_message("info", "  run metadata: " run_metadata)
+}
+
 function require_positive_integer(name, value) {
     if (value !~ /^[0-9]+$/ || value + 0 < 1)
         fail(name " must be a positive integer (received '" value "')")
@@ -356,9 +664,11 @@ function generate_treatment(replicate, code,    treatment, reference_file, sampl
     current_lengths = has_effect(code, 8)
     current_depth = has_effect(code, 16)
     treatment = treatment_code(code)
-
+    log_message("debug", "Barcode_Experiment: treatment " treatment \
+                " replicate " replicate)
     build_variant_pool(replicate, code)
-    reference_file = project_name "-" treatment "-r" pad3(replicate) "-reference.fasta"
+    reference_file = project_name "-" treatment "-r" pad3(replicate) \
+                     "-reference" sequence_extension()
     write_reference_file(reference_file, treatment)
 
     seed_random(derive_seed(replicate, code, 53))
@@ -412,18 +722,18 @@ function set_abundance_tiers(    cluster) {
 }
 
 function write_reference_file(path, treatment,    cluster) {
-    truncate_file(path)
+    out_begin(path)
     for (cluster = 1; cluster <= clusters; cluster++) {
-        print ">cluster-" cluster "|tier=" cluster_tier[cluster] "|effects=" treatment >> path
-        print cluster_reference[cluster] >> path
+        out_line(">cluster-" cluster "|tier=" cluster_tier[cluster] "|effects=" treatment)
+        out_line(cluster_reference[cluster])
     }
-    close(path)
+    out_end()
 }
 
-function write_sample(replicate, sample, treatment,    reads, path, read_number, cluster, variant, key, tier, sequence) {
+function write_sample(replicate, sample, treatment,    reads, path, read_number, cluster, variant, key, tier, sequence, header) {
     reads = current_depth ? random_integer(min_depth, max_depth) : fixed_depth
-    path = project_name "-" treatment "-r" pad3(replicate) "-s" pad3(sample) ".fasta"
-    truncate_file(path)
+    path = project_name "-" treatment "-r" pad3(replicate) "-s" pad3(sample) sequence_extension()
+    out_begin(path)
 
     for (read_number = 1; read_number <= reads; read_number++) {
         cluster = choose_cluster()
@@ -432,17 +742,25 @@ function write_sample(replicate, sample, treatment,    reads, path, read_number,
         tier = cluster_tier[cluster]
         sequence = variant_sequence[key]
 
-        print ">" header_modifier "-" pad3(sample) "_read-" pad6(read_number) \
+        header = header_modifier "-" pad3(sample) "_read-" pad6(read_number) \
               "|cluster=" cluster "|variant=" variant "|tier=" tier \
-              "|effects=" treatment "|replicate=" replicate >> path
-        print sequence >> path
+              "|effects=" treatment "|replicate=" replicate
+        if (output_format == "fastq") {
+            out_line("@" header)
+            out_line(sequence)
+            out_line("+")
+            out_line(quality_string(length(sequence)))
+        } else {
+            out_line(">" header)
+            out_line(sequence)
+        }
 
         if (write_truth)
             print path "\t" treatment "\t" replicate "\t" sample "\t" read_number \
                   "\t" cluster "\t" variant "\t" tier "\t" length(sequence) \
                   "\t" variant_substitutions[key] >> truth_file
     }
-    close(path)
+    out_end()
     if (write_truth)
         close(truth_file)
 
@@ -559,14 +877,14 @@ function clear_array(array,    key) {
 }
 
 function report() {
-    print "Barcode Experiment complete" > stderr
-    print "  design: " (paper_profile ? "Molik et al. (2020) 2^5 factorial" : \
-          (factorial ? "full 2^5 factorial" : treatment_code(selected_code))) > stderr
-    print "  samples: " generated_samples > stderr
-    print "  reads: " generated_reads > stderr
-    print "  manifest: " manifest_file > stderr
+    log_message("info", "Barcode Experiment complete")
+    log_message("info", "  design: " (paper_profile ? "Molik et al. (2020) 2^5 factorial" : \
+          (factorial ? "full 2^5 factorial" : treatment_code(selected_code))))
+    log_message("info", "  samples: " generated_samples)
+    log_message("info", "  reads: " generated_reads)
+    log_message("info", "  manifest: " manifest_file)
     if (write_truth)
-        print "  truth: " truth_file > stderr
+        log_message("info", "  truth: " truth_file)
 }
 
 function usage() {
@@ -612,6 +930,14 @@ function usage() {
     print "      --manifest FILE      sample-level design table"
     print "      --truth FILE         read-level ground-truth table"
     print "      --no-truth           do not write read-level truth"
+    print "      --run-metadata FILE  write a JSON run sidecar"
+    print ""
+    print "Run control:"
+    print "      --loglevel LEVEL     error, warning, info (default), or debug"
+    print "      --format FMT         fasta (default) or fastq (synthetic Q40)"
+    print "      --gzip               compress sample and reference outputs with gzip"
+    print "      --dry-run            estimate outputs and disk needs; write nothing"
+    print "      --no-disk-check      skip the disk-space preflight check"
     print "  -h, --help               show this help"
 }
 

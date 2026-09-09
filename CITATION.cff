@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+title: Barcode Simulator
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: David
+    family-names: Molik
+repository-code: 'https://github.com/molikd/Barcode_Simulator'
+url: 'https://github.com/molikd/Barcode_Simulator'
+abstract: >-
+  Barcode Simulator creates controlled sets of related DNA barcode,
+  amplicon, or gene-copy sequences and samples them into FASTA/FASTQ
+  files. It includes a factorial experimental-design layer for the five
+  metabarcode effects studied in Molik, Pfrender, and Emrich (2020) and
+  a dependency-free POSIX AWK distance analysis with SVG graphs.
+keywords:
+  - bioinformatics
+  - metabarcoding
+  - dna-barcodes
+  - simulation
+  - factorial-design
+  - awk
+license: Apache-2.0
+preferred-citation:
+  type: article
+  title: >-
+    Uncovering Effects from the Structure of Metabarcode Sequences for
+    Metagenetic and Microbiome Analysis
+  authors:
+    - given-names: David
+      family-names: Molik
+    - given-names: Michael
+      family-names: Pfrender
+    - given-names: Scott
+      family-names: Emrich
+  journal: Methods and Protocols
+  year: 2020
+  volume: 3
+  issue: 1
+  doi: '10.3390/mps3010022'
+  url: 'https://doi.org/10.3390/mps3010022'
